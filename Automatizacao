@@ -1,0 +1,54 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Configurar PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+
+      - name: Instalar dependências
+        run: composer install --no-progress --prefer-dist --optimize-autoloader
+
+      - name: Rodar testes
+        run: php artisan test
+
+      - name: Criar pacote de deploy
+        if: success()
+        run: |
+          zip -r deploy.zip . -x "*.git*" "vendor/*" "tests/*"
+
+      - name: Deploy para servidor (via SSH)
+        if: success()
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: "deploy.zip"
+          target: "/var/www/osTicket"  # Caminho no servidor
+
+      - name: Descompactar no servidor
+        if: success()
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cd /var/www/osTicket
+            unzip -o deploy.zip
+            rm deploy.zip
+            composer install --no-dev --optimize-autoloader
+            php artisan migrate --force
+            php artisan cache:clear
